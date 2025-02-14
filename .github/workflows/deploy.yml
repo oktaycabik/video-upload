@@ -6,7 +6,7 @@ on:
       - main
 
 env:
-  EC2_HOST: ${{ secrets.EC2_HOST }}
+  EC2_HOST: ${{ secrets.EC2_HOST }}  # EC2'nin Public IPv4 adresi
   SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
   S3_BUCKET: ${{ secrets.S3_BUCKET }}
 
@@ -47,15 +47,18 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: eu-central-1
           
-      - name: Create SSH key
+      - name: Debug SSH Connection
         run: |
+          echo "Testing SSH connection..."
           mkdir -p ~/.ssh
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
           eval $(ssh-agent -s)
           ssh-add ~/.ssh/deploy_key
+          ssh -o StrictHostKeyChecking=no -v ec2-user@${{ secrets.EC2_HOST }} 'echo "SSH connection successful"'
           
       - name: Setup EC2 Instance
+        if: success()
         run: |
           ssh -o StrictHostKeyChecking=no ec2-user@${{ secrets.EC2_HOST }} '
             # Sistem güncellemesi

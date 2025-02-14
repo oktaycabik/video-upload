@@ -39,17 +39,68 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: eu-central-1
           
-      - name: Deploy to EC2
+      - name: Setup EC2 Instance
         run: |
           echo "$SSH_PRIVATE_KEY" > private_key.pem
           chmod 600 private_key.pem
           
+          # EC2'ye bağlan ve gerekli kurulumları yap
+          ssh -i private_key.pem -o StrictHostKeyChecking=no ec2-user@${EC2_HOST} '
+            # Sistem güncellemesi
+            sudo yum update -y
+            
+            # Docker kurulumu (eğer yoksa)
+            if ! command -v docker &> /dev/null; then
+              sudo yum install -y docker
+              sudo systemctl start docker
+              sudo systemctl enable docker
+              sudo usermod -a -G docker ec2-user
+            fi
+            
+            # Docker Compose kurulumu (eğer yoksa)
+            if ! command -v docker-compose &> /dev/null; then
+              sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+              sudo chmod +x /usr/local/bin/docker-compose
+            fi
+            
+            # Uygulama klasörünü oluştur
+            mkdir -p ~/video-platform
+          '
+          
+      - name: Deploy to EC2
+        run: |
+          # EC2'ye dosyaları kopyala
           scp -i private_key.pem -o StrictHostKeyChecking=no -r backend/* ec2-user@${EC2_HOST}:~/video-platform/
           
+          # Environment dosyasını oluştur
+          ssh -i private_key.pem -o StrictHostKeyChecking=no ec2-user@${EC2_HOST} "
+            cat > ~/video-platform/.env << 'EOL'
+            PORT=3000
+            MONGODB_URI=mongodb://mongodb:27017/videodb
+            REDIS_URI=redis://redis:6379
+            JWT_SECRET=${{ secrets.JWT_SECRET }}
+            EOL
+          "
+          
+          # Uygulamayı başlat
           ssh -i private_key.pem -o StrictHostKeyChecking=no ec2-user@${EC2_HOST} '
             cd ~/video-platform
+            
+            # MongoDB ve Redis konteynerlerini kontrol et
+            if ! docker ps | grep -q mongodb; then
+              docker run -d --name mongodb -p 27017:27017 mongo:latest
+            fi
+            
+            if ! docker ps | grep -q redis; then
+              docker run -d --name redis -p 6379:6379 redis:alpine
+            fi
+            
+            # Uygulamayı yeniden başlat
             docker-compose down
             docker-compose up -d
+            
+            # Log dosyalarını kontrol et
+            docker-compose logs --tail=100
           '
           
           rm -f private_key.pem

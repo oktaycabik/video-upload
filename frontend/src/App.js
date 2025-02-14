@@ -7,7 +7,7 @@ function App() {
     <BrowserRouter>
       <div className="App">
         <Routes>
-          <Route path="/" element={<div>Ana Sayfaa</div>} />
+          <Route path="/" element={<div>Ana Sayfaaa</div>} />
           <Route path="/upload" element={<VideoUpload />} />
         </Routes>
       </div>

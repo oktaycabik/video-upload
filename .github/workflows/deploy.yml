@@ -47,15 +47,28 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: eu-central-1
           
-      - name: Debug SSH Connection
+      - name: Setup SSH and Test Connection
         run: |
-          echo "Testing SSH connection..."
           mkdir -p ~/.ssh
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
           eval $(ssh-agent -s)
           ssh-add ~/.ssh/deploy_key
-          ssh -o StrictHostKeyChecking=no -v ec2-user@${{ secrets.EC2_HOST }} 'echo "SSH connection successful"'
+          
+          # SSH bağlantı testi
+          echo "Testing SSH connection..."
+          for i in {1..5}; do
+            echo "Attempt $i of 5"
+            if ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 ec2-user@${{ secrets.EC2_HOST }} 'echo "SSH connection successful"'; then
+              echo "Connection successful"
+              break
+            fi
+            if [ $i -eq 5 ]; then
+              echo "Could not establish SSH connection after 5 attempts"
+              exit 1
+            fi
+            sleep 5
+          done
           
       - name: Setup EC2 Instance
         if: success()

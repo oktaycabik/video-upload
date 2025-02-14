@@ -1,0 +1,95 @@
+name: Deploy Application
+
+on:
+  push:
+    branches:
+      - main
+
+env:
+  EC2_HOST: ${{ secrets.EC2_HOST }}
+  SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+  S3_BUCKET: ${{ secrets.S3_BUCKET }}
+
+jobs:
+  deploy-backend:
+    runs-on: ubuntu-latest
+    if: contains(github.event.head_commit.modified, 'backend/') || contains(github.event.head_commit.added, 'backend/')
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          
+      - name: Install Backend Dependencies
+        working-directory: ./backend
+        run: npm install
+        
+      - name: Run Backend Tests
+        working-directory: ./backend
+        run: npm test
+        
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: eu-central-1
+          
+      - name: Deploy to EC2
+        run: |
+          echo "$SSH_PRIVATE_KEY" > private_key.pem
+          chmod 600 private_key.pem
+          
+          scp -i private_key.pem -o StrictHostKeyChecking=no -r backend/* ec2-user@${EC2_HOST}:~/video-platform/
+          
+          ssh -i private_key.pem -o StrictHostKeyChecking=no ec2-user@${EC2_HOST} '
+            cd ~/video-platform
+            docker-compose down
+            docker-compose up -d
+          '
+          
+          rm -f private_key.pem
+
+  deploy-frontend:
+    runs-on: ubuntu-latest
+    if: contains(github.event.head_commit.modified, 'frontend/') || contains(github.event.head_commit.added, 'frontend/')
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          
+      - name: Install Frontend Dependencies
+        working-directory: ./frontend
+        run: npm install
+        
+      - name: Run Frontend Tests
+        working-directory: ./frontend
+        run: npm test
+        
+      - name: Build Frontend
+        working-directory: ./frontend
+        env:
+          REACT_APP_API_URL: ${{ secrets.REACT_APP_API_URL }}
+        run: npm run build
+        
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: eu-central-1
+          
+      - name: Deploy to S3
+        run: |
+          aws s3 sync frontend/build/ s3://$S3_BUCKET --delete
+          
+     

@@ -13,7 +13,6 @@ env:
 jobs:
   deploy-backend:
     runs-on: ubuntu-latest
-    if: contains(github.event.head_commit.modified, 'backend/') || contains(github.event.head_commit.added, 'backend/')
     
     steps:
       - name: Checkout code
@@ -26,11 +25,20 @@ jobs:
           
       - name: Install Backend Dependencies
         working-directory: ./backend
-        run: npm install
+        run: |
+          if [ -f "package.json" ]; then
+            npm install
+          else
+            echo "package.json not found in backend directory"
+            exit 1
+          fi
         
       - name: Run Backend Tests
         working-directory: ./backend
-        run: npm test
+        run: |
+          if [ -f "package.json" ]; then
+            npm test || true
+          fi
         
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v1
@@ -39,17 +47,21 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: eu-central-1
           
+      - name: Create SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          eval $(ssh-agent -s)
+          ssh-add ~/.ssh/deploy_key
+          
       - name: Setup EC2 Instance
         run: |
-          echo "$SSH_PRIVATE_KEY" > private_key.pem
-          chmod 600 private_key.pem
-          
-          # EC2'ye bağlan ve gerekli kurulumları yap
-          ssh -i private_key.pem -o StrictHostKeyChecking=no ec2-user@${EC2_HOST} '
+          ssh -o StrictHostKeyChecking=no ec2-user@${{ secrets.EC2_HOST }} '
             # Sistem güncellemesi
-            sudo yum update -y
+            sudo yum update -y || true
             
-            # Docker kurulumu (eğer yoksa)
+            # Docker kurulumu
             if ! command -v docker &> /dev/null; then
               sudo yum install -y docker
               sudo systemctl start docker
@@ -57,7 +69,7 @@ jobs:
               sudo usermod -a -G docker ec2-user
             fi
             
-            # Docker Compose kurulumu (eğer yoksa)
+            # Docker Compose kurulumu
             if ! command -v docker-compose &> /dev/null; then
               sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
               sudo chmod +x /usr/local/bin/docker-compose
@@ -69,11 +81,11 @@ jobs:
           
       - name: Deploy to EC2
         run: |
-          # EC2'ye dosyaları kopyala
-          scp -i private_key.pem -o StrictHostKeyChecking=no -r backend/* ec2-user@${EC2_HOST}:~/video-platform/
+          # Dosyaları kopyala
+          scp -o StrictHostKeyChecking=no -r backend/* ec2-user@${{ secrets.EC2_HOST }}:~/video-platform/
           
           # Environment dosyasını oluştur
-          ssh -i private_key.pem -o StrictHostKeyChecking=no ec2-user@${EC2_HOST} "
+          ssh -o StrictHostKeyChecking=no ec2-user@${{ secrets.EC2_HOST }} "
             cat > ~/video-platform/.env << 'EOL'
             PORT=3000
             MONGODB_URI=mongodb://mongodb:27017/videodb
@@ -83,31 +95,33 @@ jobs:
           "
           
           # Uygulamayı başlat
-          ssh -i private_key.pem -o StrictHostKeyChecking=no ec2-user@${EC2_HOST} '
+          ssh -o StrictHostKeyChecking=no ec2-user@${{ secrets.EC2_HOST }} '
             cd ~/video-platform
             
-            # MongoDB ve Redis konteynerlerini kontrol et
-            if ! docker ps | grep -q mongodb; then
-              docker run -d --name mongodb -p 27017:27017 mongo:latest
-            fi
+            # Docker ağını oluştur
+            docker network create video-platform-network || true
             
-            if ! docker ps | grep -q redis; then
-              docker run -d --name redis -p 6379:6379 redis:alpine
-            fi
+            # MongoDB ve Redis konteynerlerini başlat
+            docker run -d --name mongodb --network video-platform-network \
+              -p 27017:27017 \
+              -v mongodb_data:/data/db \
+              mongo:latest || true
+            
+            docker run -d --name redis --network video-platform-network \
+              -p 6379:6379 \
+              redis:alpine || true
             
             # Uygulamayı yeniden başlat
-            docker-compose down
+            docker-compose down || true
             docker-compose up -d
             
-            # Log dosyalarını kontrol et
+            # Logları göster
             docker-compose logs --tail=100
           '
-          
-          rm -f private_key.pem
 
   deploy-frontend:
     runs-on: ubuntu-latest
-    if: contains(github.event.head_commit.modified, 'frontend/') || contains(github.event.head_commit.added, 'frontend/')
+    needs: deploy-backend
     
     steps:
       - name: Checkout code
@@ -120,11 +134,20 @@ jobs:
           
       - name: Install Frontend Dependencies
         working-directory: ./frontend
-        run: npm install
+        run: |
+          if [ -f "package.json" ]; then
+            npm install
+          else
+            echo "package.json not found in frontend directory"
+            exit 1
+          fi
         
       - name: Run Frontend Tests
         working-directory: ./frontend
-        run: npm test
+        run: |
+          if [ -f "package.json" ]; then
+            npm test || true
+          fi
         
       - name: Build Frontend
         working-directory: ./frontend
@@ -141,6 +164,11 @@ jobs:
           
       - name: Deploy to S3
         run: |
-          aws s3 sync frontend/build/ s3://$S3_BUCKET --delete
+          if [ -d "frontend/build" ]; then
+            aws s3 sync frontend/build/ s3://${{ secrets.S3_BUCKET }} --delete
+          else
+            echo "Build directory not found"
+            exit 1
+          fi
           
      

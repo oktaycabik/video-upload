@@ -50,14 +50,14 @@ jobs:
       - name: Create SSH key
         run: |
           mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/api-server-key.pem
+          chmod 600 ~/.ssh/api-server-key.pem
           eval $(ssh-agent -s)
-          ssh-add ~/.ssh/deploy_key
+          ssh-add ~/.ssh/api-server-key.pem
           
       - name: Setup EC2 Instance
         run: |
-          ssh -o StrictHostKeyChecking=no ec2-user@${{ secrets.EC2_HOST }} '
+          ssh -i ~/.ssh/api-server-key.pem -o StrictHostKeyChecking=no ec2-user@${{ secrets.EC2_HOST }} '
             # Sistem güncellemesi
             sudo yum update -y || true
             
@@ -82,10 +82,10 @@ jobs:
       - name: Deploy to EC2
         run: |
           # Dosyaları kopyala
-          scp -o StrictHostKeyChecking=no -r backend/* ec2-user@${{ secrets.EC2_HOST }}:~/video-platform/
+          scp -i ~/.ssh/api-server-key.pem -o StrictHostKeyChecking=no -r backend/* ec2-user@${{ secrets.EC2_HOST }}:~/video-platform/
           
           # Environment dosyasını oluştur
-          ssh -o StrictHostKeyChecking=no ec2-user@${{ secrets.EC2_HOST }} "
+          ssh -i ~/.ssh/api-server-key.pem -o StrictHostKeyChecking=no ec2-user@${{ secrets.EC2_HOST }} "
             cat > ~/video-platform/.env << 'EOL'
             PORT=3000
             MONGODB_URI=mongodb://mongodb:27017/videodb
@@ -95,7 +95,7 @@ jobs:
           "
           
           # Uygulamayı başlat
-          ssh -o StrictHostKeyChecking=no ec2-user@${{ secrets.EC2_HOST }} '
+          ssh -i ~/.ssh/api-server-key.pem -o StrictHostKeyChecking=no ec2-user@${{ secrets.EC2_HOST }} '
             cd ~/video-platform
             
             # Docker ağını oluştur

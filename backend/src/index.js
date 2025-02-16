@@ -4,6 +4,7 @@ const redis = require('redis');
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
+require('dotenv').config();  // .env dosyasını yükle
 const config = require('./config');
 const videoRoutes = require('./routes/video.routes');
 const authRoutes = require('./routes/auth.routes');
@@ -31,7 +32,9 @@ app.use('/api/auth', authRoutes);
 app.use(errorHandler);
 
 // MongoDB bağlantısı
-mongoose.connect(config.mongoUri);
+mongoose.connect(process.env.MONGODB_URI)
+  .then(() => console.log('MongoDB connected'))
+  .catch(err => console.error('MongoDB connection error:', err));
 
 // Redis bağlantısı
 const redisClient = redis.createClient({
